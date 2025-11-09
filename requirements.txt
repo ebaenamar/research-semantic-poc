@@ -17,6 +17,9 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 plotly>=5.14.0
 
+# Web Interface
+streamlit>=1.28.0
+
 # Data processing
 tqdm>=4.65.0
 pyyaml>=6.0
