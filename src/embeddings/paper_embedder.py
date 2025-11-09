@@ -46,19 +46,28 @@ class PaperEmbedder:
         if pd.notna(row.get('title')):
             parts.append(f"Title: {row['title']}")
             
-        # Abstract (core content)
-        if pd.notna(row.get('abstract')):
-            parts.append(f"Abstract: {row['abstract']}")
+        # Abstract (core content) - try both 'abstract' and 'abstract_text'
+        abstract = row.get('abstract') or row.get('abstract_text')
+        if pd.notna(abstract):
+            parts.append(f"Abstract: {abstract}")
             
         # Keywords if available
         if pd.notna(row.get('keywords')):
             parts.append(f"Keywords: {row['keywords']}")
             
         # MeSH terms if available (medical subject headings)
-        if pd.notna(row.get('mesh_terms')):
-            parts.append(f"MeSH: {row['mesh_terms']}")
+        mesh = row.get('mesh_terms') or row.get('mesh_headings')
+        if pd.notna(mesh):
+            parts.append(f"MeSH: {mesh}")
+        
+        # If still no content, use journal title or other metadata
+        if not parts:
+            if pd.notna(row.get('journal_title')):
+                parts.append(f"Journal: {row['journal_title']}")
+            if pd.notna(row.get('publication_year')):
+                parts.append(f"Year: {row['publication_year']}")
             
-        return " ".join(parts)
+        return " ".join(parts) if parts else ""
     
     def embed_papers(
         self, 

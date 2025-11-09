@@ -90,11 +90,29 @@ def main(args):
     print("-" * 70)
     
     clusterer = SemanticClusterer(method=args.cluster_method)
-    labels = clusterer.cluster(
-        embeddings,
-        reduce_dims=True,
-        min_cluster_size=args.min_cluster_size
-    )
+    
+    # Filter out NaN embeddings
+    import numpy as np
+    valid_mask = ~np.isnan(embeddings).any(axis=1)
+    valid_embeddings = embeddings[valid_mask]
+    valid_df = df[valid_mask].reset_index(drop=True)
+    
+    print(f"Valid embeddings: {valid_embeddings.shape[0]} / {embeddings.shape[0]}")
+    
+    # Reduce dimensions first
+    reduced_embeddings = clusterer.reduce_dimensions(valid_embeddings, n_components=10)
+    
+    # Then cluster
+    if args.cluster_method == 'hdbscan':
+        labels = clusterer.cluster_hdbscan(
+            reduced_embeddings,
+            min_cluster_size=args.min_cluster_size
+        )
+    else:
+        labels = clusterer.cluster(reduced_embeddings)
+    
+    # Use valid_df instead of df for rest of pipeline
+    df = valid_df
     
     clusters_file = output_dir / 'clusters.json'
     clusterer.save_clusters(str(clusters_file), df, labels)
