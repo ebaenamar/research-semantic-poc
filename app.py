@@ -188,7 +188,7 @@ def run_pipeline(df, config, progress_bar, status_text):
     return results
 
 def generate_hypotheses(df, labels, validation_results):
-    """Generate hypotheses from clusters"""
+    """Generate detailed hypotheses from clusters"""
     
     hypotheses = []
     
@@ -208,18 +208,137 @@ def generate_hypotheses(df, labels, validation_results):
         reproducibility = cluster_data['overall_score']
         size = len(cluster_papers)
         
-        # Generate hypothesis
+        # Extract cluster characteristics
+        scores = cluster_data.get('scores', {})
+        method_score = scores.get('methodological_coherence', 0)
+        framework_score = scores.get('framework_coherence', 0)
+        
+        # Get methodology and framework from justification
+        justification = cluster_data.get('justification', {})
+        dominant_method = justification.get('dominant_method', 'unknown')
+        dominant_framework = justification.get('conceptual_framework', 'unknown')
+        method_interpretation = justification.get('methodological_basis', '')
+        
+        # Analyze temporal span
+        if 'publication_year' in cluster_papers.columns:
+            years = pd.to_numeric(cluster_papers['publication_year'], errors='coerce').dropna()
+            if len(years) > 0:
+                year_range = f"{int(years.min())}-{int(years.max())}"
+                year_span = int(years.max() - years.min())
+            else:
+                year_range = "Unknown"
+                year_span = 0
+        else:
+            year_range = "Unknown"
+            year_span = 0
+        
+        # Extract common keywords from titles and abstracts
+        all_text = ' '.join(cluster_papers['title'].fillna('').astype(str))
+        if 'abstract_text' in cluster_papers.columns:
+            all_text += ' ' + ' '.join(cluster_papers['abstract_text'].fillna('').astype(str)[:5])  # First 5 abstracts
+        
+        # Common medical/research terms
+        common_terms = []
+        keywords_to_check = [
+            'machine learning', 'deep learning', 'prediction', 'classification',
+            'cardiac', 'heart', 'cardiovascular', 'neurology', 'brain',
+            'pediatric', 'children', 'infant', 'neonatal',
+            'outcome', 'mortality', 'survival', 'prognosis',
+            'treatment', 'therapy', 'intervention', 'surgery',
+            'diagnosis', 'screening', 'detection',
+            'genetic', 'genomic', 'biomarker',
+            'cohort', 'retrospective', 'prospective', 'trial'
+        ]
+        
+        all_text_lower = all_text.lower()
+        for keyword in keywords_to_check:
+            if keyword in all_text_lower:
+                common_terms.append(keyword)
+        
+        # Determine hypothesis type
+        if size > 30:
+            hyp_type = 'Meta-Analysis'
+            type_rationale = f"Large cluster ({size} papers) suitable for systematic review"
+        elif 'computational' in dominant_method.lower() or 'machine learning' in all_text_lower:
+            hyp_type = 'ML Application'
+            type_rationale = f"Computational focus with potential for ML improvements"
+        elif size > 15:
+            hyp_type = 'Comparative Study'
+            type_rationale = f"Medium cluster ({size} papers) suitable for comparative analysis"
+        else:
+            hyp_type = 'Replication Study'
+            type_rationale = f"Focused cluster ({size} papers) for targeted replication"
+        
+        # Generate detailed title
+        topic_hint = common_terms[0] if common_terms else dominant_method
+        title = f"{hyp_type}: {topic_hint.title()} Research in {dominant_framework.title()} Context"
+        
+        # Generate detailed description
+        description_parts = []
+        
+        # Overview
+        description_parts.append(f"**Overview**: This cluster contains {size} papers ")
+        description_parts.append(f"published between {year_range} ({year_span} year span), ")
+        description_parts.append(f"with a validation score of {reproducibility:.2f}. ")
+        
+        # Methodology
+        description_parts.append(f"\n\n**Methodology**: {method_interpretation} ")
+        description_parts.append(f"(coherence: {method_score:.2f}). ")
+        
+        # Framework
+        description_parts.append(f"\n\n**Framework**: Papers follow a {dominant_framework} approach ")
+        description_parts.append(f"(coherence: {framework_score:.2f}). ")
+        
+        # Common themes
+        if common_terms:
+            description_parts.append(f"\n\n**Common Themes**: {', '.join(common_terms[:5])}. ")
+        
+        # Research opportunity
+        description_parts.append(f"\n\n**Research Opportunity**: {type_rationale}. ")
+        
+        # Feasibility
+        if reproducibility >= 0.7:
+            description_parts.append(f"High validation score ({reproducibility:.2f}) indicates strong scientific coherence. ")
+        elif reproducibility >= 0.5:
+            description_parts.append(f"Moderate validation score ({reproducibility:.2f}) suggests some heterogeneity. ")
+        else:
+            description_parts.append(f"Lower validation score ({reproducibility:.2f}) indicates diverse methodologies. ")
+        
+        # Data-driven feasibility
+        if 'dataset' in all_text_lower or 'data' in all_text_lower:
+            description_parts.append("Multiple papers mention datasets, suggesting good data availability. ")
+        
+        # Recommended approach
+        if hyp_type == 'Meta-Analysis':
+            description_parts.append("\n\n**Recommended Approach**: Conduct systematic review and meta-analysis to synthesize findings across studies.")
+        elif hyp_type == 'ML Application':
+            description_parts.append("\n\n**Recommended Approach**: Develop ML models leveraging insights from existing computational work.")
+        elif hyp_type == 'Comparative Study':
+            description_parts.append("\n\n**Recommended Approach**: Compare methodologies and outcomes across studies to identify best practices.")
+        else:
+            description_parts.append("\n\n**Recommended Approach**: Replicate key findings with improved methodology or larger sample.")
+        
+        description = ''.join(description_parts)
+        
+        # Sample papers
         sample_titles = cluster_papers['title'].head(3).tolist()
         
         hypothesis = {
             'id': len(hypotheses) + 1,
             'cluster_id': cluster_id,
-            'type': 'Meta-Analysis' if size > 20 else 'ML Application',
-            'title': f"Research Opportunity in Cluster {cluster_id}",
-            'description': f"Cluster with {size} papers showing {reproducibility:.2f} validation score",
+            'type': hyp_type,
+            'title': title,
+            'description': description,
             'sample_papers': sample_titles,
             'reproducibility': reproducibility,
             'size': size,
+            'year_range': year_range,
+            'year_span': year_span,
+            'dominant_method': dominant_method,
+            'dominant_framework': dominant_framework,
+            'common_terms': common_terms[:5],
+            'method_score': method_score,
+            'framework_score': framework_score,
             'priority_score': (reproducibility * 0.4 + min(size/50, 1) * 0.3 + 0.3) * 10
         }
         
@@ -420,7 +539,7 @@ def main():
                 st.metric("Hypotheses Generated", len(results['hypotheses']))
             
             # Tabs for different views
-            tab1, tab2, tab3, tab4 = st.tabs(["🎯 Clusters", "✅ Validation", "💡 Hypotheses", "📥 Export"])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 Clusters", "✅ Validation", "💡 Hypotheses", "🔍 Criteria", "📥 Export"])
             
             with tab1:
                 st.subheader("Cluster Visualization")
@@ -529,24 +648,170 @@ def main():
                 else:
                     # Display each hypothesis
                     for hyp in hypotheses[:10]:  # Top 10
-                        with st.expander(f"**Hypothesis #{hyp['id']}: {hyp['title']}** (Score: {hyp['priority_score']:.2f})"):
-                            col1, col2 = st.columns([2, 1])
+                        with st.expander(f"**Hypothesis #{hyp['id']}: {hyp['title']}** (Score: {hyp['priority_score']:.2f})", expanded=False):
                             
+                            # Get cluster data
+                            cluster_id = hyp['cluster_id']
+                            cluster_mask = results['labels'] == cluster_id
+                            cluster_papers = results['df'][cluster_mask]
+                            
+                            # Metrics row
+                            col1, col2, col3, col4 = st.columns(4)
                             with col1:
-                                st.markdown(f"**Description:** {hyp['description']}")
-                                st.markdown(f"**Type:** {hyp['type']}")
-                                st.markdown(f"**Cluster:** {hyp['cluster_id']}")
-                                
-                                st.markdown("**Sample Papers:**")
-                                for i, title in enumerate(hyp['sample_papers'], 1):
-                                    st.markdown(f"{i}. {title}")
-                            
-                            with col2:
                                 st.metric("Priority Score", f"{hyp['priority_score']:.2f}/10")
+                            with col2:
                                 st.metric("Reproducibility", f"{hyp['reproducibility']:.2f}")
+                            with col3:
                                 st.metric("Cluster Size", hyp['size'])
+                            with col4:
+                                st.metric("Type", hyp['type'])
+                            
+                            st.divider()
+                            
+                            # Description
+                            st.markdown(f"**Description:** {hyp['description']}")
+                            
+                            st.divider()
+                            
+                            # All papers with full details
+                            st.markdown("### 📚 All Papers in Cluster")
+                            
+                            for idx, (_, paper) in enumerate(cluster_papers.iterrows(), 1):
+                                with st.container():
+                                    st.markdown(f"**Paper {idx}**")
+                                    
+                                    # Title
+                                    st.markdown(f"**Title:** {paper.get('title', 'N/A')}")
+                                    
+                                    # PMID if available
+                                    if 'pmid' in paper and pd.notna(paper['pmid']):
+                                        pmid = str(paper['pmid']).replace('.0', '')
+                                        st.markdown(f"**PMID:** [{pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
+                                    
+                                    # Year
+                                    if 'publication_year' in paper and pd.notna(paper['publication_year']):
+                                        st.markdown(f"**Year:** {int(paper['publication_year'])}")
+                                    
+                                    # Journal
+                                    if 'journal_title' in paper and pd.notna(paper['journal_title']):
+                                        st.markdown(f"**Journal:** {paper['journal_title']}")
+                                    
+                                    # Abstract (truncated)
+                                    if 'abstract_text' in paper and pd.notna(paper['abstract_text']):
+                                        abstract = str(paper['abstract_text'])
+                                        if len(abstract) > 300:
+                                            st.markdown(f"**Abstract:** {abstract[:300]}...")
+                                        else:
+                                            st.markdown(f"**Abstract:** {abstract}")
+                                    
+                                    # MeSH terms
+                                    if 'mesh_headings' in paper and pd.notna(paper['mesh_headings']):
+                                        mesh = str(paper['mesh_headings'])
+                                        if mesh and mesh != 'nan':
+                                            st.markdown(f"**MeSH Terms:** {mesh[:200]}...")
+                                    
+                                    st.markdown("---")
             
             with tab4:
+                st.subheader("🔍 Validation Criteria Used")
+                
+                st.markdown("### Standard Criteria (Always Applied)")
+                
+                criteria_standard = pd.DataFrame([
+                    {
+                        "Criterion": "Methodological Coherence",
+                        "Weight": "35%",
+                        "Description": "Papers use similar research methods (Clinical Trial, Cohort, Lab, Computational, etc.)"
+                    },
+                    {
+                        "Criterion": "Framework Coherence",
+                        "Weight": "25%",
+                        "Description": "Papers share conceptual framework (Mechanistic, Predictive, Interventional, etc.)"
+                    },
+                    {
+                        "Criterion": "Temporal Coherence",
+                        "Weight": "15%",
+                        "Description": "Papers from similar time periods (methods evolve over time)"
+                    },
+                    {
+                        "Criterion": "Internal Consistency",
+                        "Weight": "15%",
+                        "Description": "Papers are semantically similar to each other"
+                    },
+                    {
+                        "Criterion": "MeSH Coherence",
+                        "Weight": "10%",
+                        "Description": "Papers share Medical Subject Headings (standardized terms)"
+                    }
+                ])
+                
+                st.dataframe(criteria_standard, hide_index=True, width='stretch')
+                
+                if st.session_state.config['use_custom_criteria']:
+                    st.markdown("### Custom Criteria (Optional - Currently Enabled)")
+                    
+                    criteria_custom = pd.DataFrame([
+                        {
+                            "Criterion": "Data Availability",
+                            "Weight": "15%",
+                            "Description": "Papers mention available datasets (GitHub, Figshare, Zenodo, etc.)"
+                        },
+                        {
+                            "Criterion": "Clinical Trial Sponsor",
+                            "Weight": "10%",
+                            "Description": "Clinical trials have clear sponsor information (industry vs academic)"
+                        },
+                        {
+                            "Criterion": "Replication Status",
+                            "Weight": "10%",
+                            "Description": "Findings have been replicated or validated in independent studies"
+                        }
+                    ])
+                    
+                    st.dataframe(criteria_custom, hide_index=True, width='stretch')
+                else:
+                    st.info("Custom criteria are currently disabled. Enable in sidebar to use.")
+                
+                st.markdown("### Scoring Thresholds")
+                
+                thresholds = pd.DataFrame([
+                    {"Score Range": "≥ 0.8", "Status": "✅ EXCELLENT", "Description": "High-quality, scientifically coherent cluster"},
+                    {"Score Range": "0.6 - 0.8", "Status": "✅ GOOD", "Description": "Acceptable scientific coherence"},
+                    {"Score Range": "< 0.6", "Status": "⚠️ REVIEW", "Description": "Low coherence - needs review or reclassification"}
+                ])
+                
+                st.dataframe(thresholds, hide_index=True, width='stretch')
+                
+                st.markdown("### Methodologies Detected")
+                
+                with st.expander("View all 8 methodologies"):
+                    methodologies = pd.DataFrame([
+                        {"Methodology": "Clinical Trial", "Keywords": "randomized, controlled trial, RCT, double-blind, placebo"},
+                        {"Methodology": "Cohort Study", "Keywords": "cohort, prospective, retrospective, follow-up, longitudinal"},
+                        {"Methodology": "Case-Control", "Keywords": "case-control, matched controls, odds ratio"},
+                        {"Methodology": "Cross-Sectional", "Keywords": "cross-sectional, survey, prevalence, questionnaire"},
+                        {"Methodology": "Systematic Review", "Keywords": "systematic review, meta-analysis, PRISMA, Cochrane"},
+                        {"Methodology": "Laboratory", "Keywords": "in vitro, in vivo, cell culture, animal model"},
+                        {"Methodology": "Computational", "Keywords": "bioinformatics, machine learning, algorithm, simulation"},
+                        {"Methodology": "Genomic", "Keywords": "genome-wide, GWAS, sequencing, RNA-seq"}
+                    ])
+                    st.dataframe(methodologies, hide_index=True, width='stretch')
+                
+                st.markdown("### Conceptual Frameworks Detected")
+                
+                with st.expander("View all 5 frameworks"):
+                    frameworks = pd.DataFrame([
+                        {"Framework": "Mechanistic", "Keywords": "mechanism, pathway, molecular, signaling"},
+                        {"Framework": "Etiological", "Keywords": "etiology, risk factor, cause, pathogenesis"},
+                        {"Framework": "Descriptive", "Keywords": "prevalence, incidence, epidemiology, distribution"},
+                        {"Framework": "Predictive", "Keywords": "prognosis, prediction, risk score, prognostic"},
+                        {"Framework": "Interventional", "Keywords": "treatment, therapy, intervention, efficacy"}
+                    ])
+                    st.dataframe(frameworks, hide_index=True, width='stretch')
+                
+                st.info("📖 For complete documentation, see `VALIDATION_CRITERIA.md` in the repository")
+            
+            with tab5:
                 st.subheader("Export Results")
                 
                 # Prepare export data
