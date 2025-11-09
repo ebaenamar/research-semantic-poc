@@ -46,26 +46,50 @@ QUICK WINS (PRIORITY 2):
 ### Sample Papers from Cluster 4
 
 **Paper 1**: Machine Learning and Clinical Predictors of Mortality in Cardiac Arrest Patients: A Comprehensive Analysis
-- **PMID**: Available in cluster analysis
+- **PMID**: From Cluster 4 analysis
 - **Focus**: ML-based mortality prediction in cardiac arrest
 - **Methods**: Random Forest, XGBoost, ensemble methods
 - **Dataset**: Hospital cardiac arrest registry
+- **Relevance**: Direct ML application in cardiac emergencies
 
 **Paper 2**: Generating Risk Reduction Analytics in Complex Cardiac Care Environments (GR²AC³E): Risk Prediction in Congenital Catheterization
-- **PMID**: Available in cluster analysis
+- **PMID**: From Cluster 4 analysis
 - **Focus**: Risk prediction in pediatric cardiac catheterization
 - **Methods**: Predictive modeling, risk stratification
 - **Dataset**: Congenital cardiac catheterization procedures
+- **Relevance**: Pediatric cardiac interventions
 
-**Paper 3**: AI-PEDURO - Artificial Intelligence in Pediatric Urology: Protocol for a Living Scoping Review
-- **PMID**: Available in cluster analysis
-- **Focus**: AI applications in pediatric care
-- **Methods**: Scoping review methodology
-- **Relevance**: Cross-domain AI applications
+**Additional Cardiology Papers from Dataset**:
 
-**Additional Related Papers**:
-- "Neutrophil-to-lymphocyte ratio: link to congestion, inflammation, and mortality in outpatients with heart failure" (PMID: 40024803)
-- "Machine learning-based automatic estimation of cortical atrophy using brain CT images" (PMID: 36042322)
+**Paper 3**: Neutrophil-to-lymphocyte ratio: link to congestion, inflammation, and mortality in outpatients with heart failure
+- **PMID**: 40024803
+- **Year**: 2025
+- **Focus**: Biomarker prediction in heart failure
+- **Methods**: Statistical analysis, risk modeling
+- **Relevance**: Heart failure outcome prediction
+
+**Paper 4**: Integrated Clinical and Magnetic Resonance Imaging Assessments Late After Fontan Operation
+- **PMID**: 34016261
+- **Year**: 2021
+- **Focus**: Post-surgical cardiac assessment in congenital heart disease
+- **Methods**: MRI analysis, clinical correlation
+- **Relevance**: Congenital cardiac surgery outcomes
+
+**Paper 5**: Hypertrophic Cardiomyopathy and Ventricular Preexcitation in the Young: Cause and Accessory Pathway Characteristics
+- **PMID**: 37877314
+- **Year**: 2023
+- **Focus**: Pediatric cardiomyopathy and arrhythmias
+- **Methods**: Clinical characterization, pathway analysis
+- **Relevance**: Pediatric cardiac electrophysiology
+
+**Paper 6**: Effects of Race and Gender Classifications on Atherosclerotic Cardiovascular Disease Risk Estimates
+- **PMID**: 38076214
+- **Year**: 2023
+- **Focus**: Cardiovascular risk prediction with demographic factors
+- **Methods**: Risk calculator analysis, cohort study
+- **Relevance**: ML features for risk stratification
+
+**Note**: All papers are from the Boston Children's Hospital PubMed dataset (2,000 papers) used in this analysis. PMIDs can be accessed at: https://pubmed.ncbi.nlm.nih.gov/[PMID]/
 
 ---
 
