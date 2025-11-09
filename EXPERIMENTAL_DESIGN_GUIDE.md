@@ -43,10 +43,29 @@ QUICK WINS (PRIORITY 2):
 
 > **Secondary**: Ensemble methods combining domain-specific models will outperform single-domain models, with greatest gains in edge cases (AUC improvement >15% in bottom quartile).
 
-### Sample Papers
-- "Machine Learning and Clinical Predictors of Mortality in Cardiac Surgery"
-- "Deep Learning for Automated ECG Interpretation in Pediatric Patients"
-- "Predictive Modeling of Heart Failure Readmission Using EHR Data"
+### Sample Papers from Cluster 4
+
+**Paper 1**: Machine Learning and Clinical Predictors of Mortality in Cardiac Arrest Patients: A Comprehensive Analysis
+- **PMID**: Available in cluster analysis
+- **Focus**: ML-based mortality prediction in cardiac arrest
+- **Methods**: Random Forest, XGBoost, ensemble methods
+- **Dataset**: Hospital cardiac arrest registry
+
+**Paper 2**: Generating Risk Reduction Analytics in Complex Cardiac Care Environments (GR²AC³E): Risk Prediction in Congenital Catheterization
+- **PMID**: Available in cluster analysis
+- **Focus**: Risk prediction in pediatric cardiac catheterization
+- **Methods**: Predictive modeling, risk stratification
+- **Dataset**: Congenital cardiac catheterization procedures
+
+**Paper 3**: AI-PEDURO - Artificial Intelligence in Pediatric Urology: Protocol for a Living Scoping Review
+- **PMID**: Available in cluster analysis
+- **Focus**: AI applications in pediatric care
+- **Methods**: Scoping review methodology
+- **Relevance**: Cross-domain AI applications
+
+**Additional Related Papers**:
+- "Neutrophil-to-lymphocyte ratio: link to congestion, inflammation, and mortality in outpatients with heart failure" (PMID: 40024803)
+- "Machine learning-based automatic estimation of cortical atrophy using brain CT images" (PMID: 36042322)
 
 ---
 
@@ -57,10 +76,49 @@ QUICK WINS (PRIORITY 2):
 **Objective**: Obtain and harmonize public datasets
 
 **Datasets to Target**:
-1. MIMIC-III/IV (ICU cardiac data)
-2. PTB-XL (ECG database, 21,837 records)
-3. Heart Disease UCI (303 patients)
-4. Paper-specific datasets from supplements
+
+1. **MIMIC-III / MIMIC-IV** (ICU data with cardiac outcomes)
+   - **URL**: https://physionet.org/content/mimiciii/
+   - **Access**: Requires PhysioNet credentialing (free, ~1 week)
+   - **Size**: 60,000+ ICU admissions
+   - **Features**: Vitals, labs, medications, procedures, outcomes
+   - **Cardiac subset**: ~15,000 patients with cardiac conditions
+   - **License**: PhysioNet Credentialed Health Data License
+
+2. **PTB-XL ECG Database**
+   - **URL**: https://physionet.org/content/ptb-xl/
+   - **Access**: Open access, no registration required
+   - **Size**: 21,837 clinical 12-lead ECGs (10 seconds each)
+   - **Features**: Raw ECG signals, diagnostic labels, patient metadata
+   - **Labels**: 71 different diagnostic classes
+   - **License**: Creative Commons Attribution 4.0
+
+3. **Heart Disease UCI**
+   - **URL**: https://archive.ics.uci.edu/ml/datasets/heart+disease
+   - **Access**: Open access, direct download
+   - **Size**: 303 patients (Cleveland database)
+   - **Features**: 14 attributes (age, sex, chest pain type, BP, cholesterol, etc.)
+   - **Target**: Presence of heart disease (5 classes)
+   - **License**: Public domain
+
+4. **Framingham Heart Study** (if accessible)
+   - **URL**: https://framinghamheartstudy.org/fhs-for-researchers/
+   - **Access**: Requires application and approval
+   - **Size**: 5,000+ participants with longitudinal data
+   - **Features**: Cardiovascular risk factors, outcomes over decades
+   - **Note**: May require collaboration with approved researchers
+
+5. **eICU Collaborative Research Database**
+   - **URL**: https://physionet.org/content/eicu-crd/
+   - **Access**: Requires PhysioNet credentialing
+   - **Size**: 200,000+ ICU admissions from 200+ hospitals
+   - **Features**: Similar to MIMIC but multi-center
+   - **Cardiac subset**: Large cardiac patient population
+
+6. **Paper-Specific Datasets**
+   - Check supplementary materials of papers in Cluster 4
+   - Contact corresponding authors for data sharing
+   - Look for Zenodo/Figshare/OSF repositories linked in papers
 
 **Process**:
 ```
@@ -468,6 +526,115 @@ See `EXPERIMENTAL_DESIGN_APPENDIX.md` for:
 
 ---
 
-**Document Version**: 1.0
+## 📚 References & Resources
+
+### Public Datasets for Cardiac ML
+
+**PhysioNet (Primary Source)**:
+- Main Portal: https://physionet.org/
+- MIMIC-III: https://physionet.org/content/mimiciii/
+- MIMIC-IV: https://physionet.org/content/mimiciv/
+- PTB-XL ECG: https://physionet.org/content/ptb-xl/
+- eICU: https://physionet.org/content/eicu-crd/
+- Credentialing: https://physionet.org/about/citi-course/
+
+**UCI Machine Learning Repository**:
+- Heart Disease: https://archive.ics.uci.edu/ml/datasets/heart+disease
+- All Medical Datasets: https://archive.ics.uci.edu/ml/datasets.php?format=&task=&att=&area=life&numAtt=&numIns=&type=&sort=nameUp&view=table
+
+**Kaggle Datasets**:
+- Heart Disease: https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset
+- ECG Heartbeat: https://www.kaggle.com/datasets/shayanfazeli/heartbeat
+- Cardiovascular Disease: https://www.kaggle.com/datasets/sulianova/cardiovascular-disease-dataset
+
+**Papers with Code**:
+- Medical Datasets: https://paperswithcode.com/datasets?mod=medical
+- Cardiac Datasets: https://paperswithcode.com/datasets?q=cardiac
+
+### Tools & Libraries
+
+**Machine Learning**:
+- scikit-learn: https://scikit-learn.org/
+- XGBoost: https://xgboost.readthedocs.io/
+- LightGBM: https://lightgbm.readthedocs.io/
+- CatBoost: https://catboost.ai/
+- PyTorch: https://pytorch.org/
+- TensorFlow: https://www.tensorflow.org/
+
+**Interpretability**:
+- SHAP: https://shap.readthedocs.io/
+- LIME: https://github.com/marcotcr/lime
+- InterpretML: https://interpret.ml/
+
+**Medical ML Frameworks**:
+- MONAI (Medical imaging): https://monai.io/
+- TorchXRayVision: https://github.com/mlmed/torchxrayvision
+- MedCAT (NLP): https://github.com/CogStack/MedCAT
+
+**Federated Learning**:
+- PySyft: https://github.com/OpenMined/PySyft
+- TensorFlow Federated: https://www.tensorflow.org/federated
+- Flower: https://flower.dev/
+
+**Causal Inference**:
+- DoWhy: https://microsoft.github.io/dowhy/
+- EconML: https://econml.azurewebsites.net/
+- CausalML: https://causalml.readthedocs.io/
+
+### Tutorials & Courses
+
+**ML in Healthcare**:
+- MIT 6.S897: https://mlhc.mit.edu/
+- Stanford CS329D: https://cs329d.stanford.edu/
+- Fast.ai Medical Imaging: https://www.fast.ai/
+
+**Reproducible Research**:
+- Papers with Code: https://paperswithcode.com/
+- ML Reproducibility Challenge: https://paperswithcode.com/rc2020
+- Reproducibility Checklist: https://www.cs.mcgill.ca/~jpineau/ReproducibilityChecklist.pdf
+
+### Paper Access
+
+**PubMed Papers from This Study**:
+- Access via PMID: https://pubmed.ncbi.nlm.nih.gov/[PMID]/
+- Full text (when available): https://www.ncbi.nlm.nih.gov/pmc/articles/PMC[PMCID]/
+- Boston Children's Hospital papers: Search "Boston Children's Hospital" on PubMed
+
+**Preprint Servers**:
+- arXiv (CS/ML): https://arxiv.org/
+- medRxiv (Medicine): https://www.medrxiv.org/
+- bioRxiv (Biology): https://www.biorxiv.org/
+
+### Data Sharing Platforms
+
+**Research Data Repositories**:
+- Zenodo: https://zenodo.org/
+- Figshare: https://figshare.com/
+- OSF (Open Science Framework): https://osf.io/
+- Dryad: https://datadryad.org/
+
+**Code Repositories**:
+- GitHub: https://github.com/
+- GitLab: https://gitlab.com/
+- Papers with Code: https://paperswithcode.com/
+
+### Ethical & Regulatory
+
+**Data Use Agreements**:
+- PhysioNet DUA: https://physionet.org/about/dua/
+- NIH Data Sharing: https://sharing.nih.gov/
+
+**IRB & Ethics**:
+- CITI Program: https://about.citiprogram.org/
+- NIH Human Subjects Training: https://grants.nih.gov/policy/humansubjects/training.htm
+
+**HIPAA Compliance**:
+- HHS HIPAA: https://www.hhs.gov/hipaa/
+- De-identification Guidance: https://www.hhs.gov/hipaa/for-professionals/privacy/special-topics/de-identification/
+
+---
+
+**Document Version**: 1.1
 **Last Updated**: November 9, 2025
 **Repository**: https://github.com/ebaenamar/research-semantic-poc
+**Contact**: Open an issue on GitHub for questions
