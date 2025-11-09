@@ -158,7 +158,7 @@ def run_pipeline(df, config, progress_bar, status_text):
     progress_bar.progress(0.6)
     
     validator = ClassificationValidator()
-    validation_results = validator.validate_all_clusters(valid_df, labels)
+    validation_results = validator.validate_all_clusters(valid_df, labels, text_column='abstract_text')
     results['validation'] = validation_results
     
     # Stage 4: Custom Criteria
@@ -167,11 +167,11 @@ def run_pipeline(df, config, progress_bar, status_text):
         progress_bar.progress(0.8)
         
         custom_validator = CustomCriteriaValidator()
-        custom_validator.add_criterion(DataAvailabilityCriterion(), weight=0.15)
-        custom_validator.add_criterion(ClinicalTrialSponsorCriterion(), weight=0.10)
-        custom_validator.add_criterion(ReplicationStatusCriterion(), weight=0.10)
+        custom_validator.add_criterion(DataAvailabilityCriterion(weight=0.15))
+        custom_validator.add_criterion(ClinicalTrialSponsorCriterion(weight=0.10))
+        custom_validator.add_criterion(ReplicationStatusCriterion(weight=0.10))
         
-        custom_results = custom_validator.evaluate_all_clusters(valid_df, labels)
+        custom_results = custom_validator.evaluate_all_clusters(valid_df, labels, text_column='abstract_text')
         results['custom_validation'] = custom_results
     
     # Stage 5: Generate Hypotheses
@@ -355,12 +355,12 @@ def main():
         # Show example configuration
         st.subheader("Current Configuration")
         config_df = pd.DataFrame([
-            {"Parameter": "Dataset Size", "Value": st.session_state.config.get('dataset_size', 200)},
-            {"Parameter": "Embedding Model", "Value": st.session_state.config['embedding_model']},
-            {"Parameter": "Min Cluster Size", "Value": st.session_state.config['min_cluster_size']},
+            {"Parameter": "Dataset Size", "Value": str(st.session_state.config.get('dataset_size', 200))},
+            {"Parameter": "Embedding Model", "Value": str(st.session_state.config['embedding_model'])},
+            {"Parameter": "Min Cluster Size", "Value": str(st.session_state.config['min_cluster_size'])},
             {"Parameter": "Custom Criteria", "Value": "✅" if st.session_state.config['use_custom_criteria'] else "❌"}
         ])
-        st.dataframe(config_df, hide_index=True, use_container_width=True)
+        st.dataframe(config_df, hide_index=True, width='stretch')
         
     else:
         # Pipeline execution
@@ -444,7 +444,7 @@ def main():
                     height=600
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Cluster sizes
                 st.subheader("Cluster Sizes")
@@ -466,7 +466,7 @@ def main():
                     color_continuous_scale='Blues'
                 )
                 
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, width='stretch')
             
             with tab2:
                 st.subheader("Validation Scores")
@@ -497,7 +497,7 @@ def main():
                         'Cluster': f"C{cluster_id}",
                         'Overall Score': cluster_data['overall_score'],
                         'Size': cluster_data['size'],
-                        'Status': '✅ Pass' if cluster_data['passed'] else '❌ Fail'
+                        'Status': '✅ Pass' if cluster_data['validation_passed'] else '❌ Fail'
                     })
                 
                 scores_df = pd.DataFrame(scores_data)
@@ -513,11 +513,11 @@ def main():
                 fig_scores.add_hline(y=0.6, line_dash="dash", line_color="orange", 
                                     annotation_text="Pass Threshold")
                 
-                st.plotly_chart(fig_scores, use_container_width=True)
+                st.plotly_chart(fig_scores, width='stretch')
                 
                 # Detailed scores table
                 st.subheader("Detailed Scores")
-                st.dataframe(scores_df, hide_index=True, use_container_width=True)
+                st.dataframe(scores_df, hide_index=True, width='stretch')
             
             with tab3:
                 st.subheader("Generated Hypotheses")
