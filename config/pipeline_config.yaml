@@ -1,0 +1,121 @@
+# Pipeline Configuration
+
+# Data settings
+data:
+  # Path to input CSV file
+  input_file: "data/aiscientist/pubmed_data_2000.csv"
+  
+  # Columns to use for embedding
+  text_columns:
+    - title
+    - abstract
+    - keywords
+    - mesh_terms
+  
+  # Column containing publication year (for temporal analysis)
+  year_column: year
+  
+  # Column containing citation count (if available)
+  citation_column: citations
+
+# Embedding settings
+embeddings:
+  # Model to use for generating embeddings
+  # Options: 'all-MiniLM-L6-v2', 'allenai/specter', 'sentence-transformers/all-mpnet-base-v2'
+  model_name: "all-MiniLM-L6-v2"
+  
+  # Batch size for encoding
+  batch_size: 32
+  
+  # Cache embeddings to file
+  cache: true
+  cache_file: "output/embeddings.pkl"
+
+# Clustering settings
+clustering:
+  # Method: 'hdbscan', 'dbscan', 'hierarchical'
+  method: "hdbscan"
+  
+  # Reduce dimensionality before clustering
+  reduce_dimensions: true
+  n_components: 5
+  
+  # HDBSCAN parameters
+  hdbscan:
+    min_cluster_size: 10
+    min_samples: 5
+  
+  # DBSCAN parameters
+  dbscan:
+    eps: 0.5
+    min_samples: 5
+  
+  # Hierarchical clustering parameters
+  hierarchical:
+    n_clusters: 10
+    linkage: average
+
+# Gap analysis settings
+gap_analysis:
+  # Temporal gap thresholds
+  temporal:
+    outdated_threshold_years: 5
+    needs_update_threshold_years: 3
+  
+  # Methodologies to check for
+  methodologies:
+    - experimental
+    - observational
+    - meta_analysis
+    - computational
+    - qualitative
+    - machine_learning
+    - genomics
+    - imaging
+  
+  # Minimum usage percentage to not be considered "underused"
+  methodology_threshold: 10.0
+  
+  # Cross-cluster similarity threshold
+  cross_cluster_similarity:
+    min_threshold: 0.5
+    max_threshold: 0.8
+    min_connections: 5
+
+# Hypothesis generation settings
+hypothesis_generation:
+  # Maximum number of hypotheses per type
+  max_per_type: 10
+  
+  # Score weights (must sum to 1.0)
+  score_weights:
+    novelty: 0.35
+    feasibility: 0.15
+    verifiability: 0.20
+    impact: 0.30
+  
+  # Generate data-driven hypotheses
+  data_driven:
+    enabled: true
+    citation_threshold_percentile: 0.75
+
+# Output settings
+output:
+  # Output directory
+  directory: "output"
+  
+  # Output file names
+  files:
+    clusters: "clusters.json"
+    gap_analysis: "gap_analysis.json"
+    hypotheses: "hypotheses.json"
+  
+  # Pretty print JSON
+  pretty_print: true
+  indent: 2
+
+# Logging settings
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null  # Set to path for file logging
