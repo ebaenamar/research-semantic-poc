@@ -19,7 +19,13 @@ import time
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from embeddings import PaperEmbedder
-from clustering import SemanticClusterer
+from clustering import (
+    SemanticClusterer, 
+    DomainAwareClusterer, 
+    AdaptiveClusterer, 
+    ThematicCoherenceValidator,
+    HierarchicalFunnelClusterer
+)
 from extraction import ClassificationValidator
 from extraction.custom_criteria import (
     CustomCriteriaValidator,
@@ -138,20 +144,159 @@ def run_pipeline(df, config, progress_bar, status_text):
     progress_bar.progress(0.4)
     
     clusterer = SemanticClusterer(method='hdbscan')
+    clustering_mode = config.get('clustering_mode', '⚡ Standard')
+    
+    # Always do UMAP reduction first
     reduced = clusterer.reduce_dimensions(
         valid_embeddings,
         n_components=config['umap_components']
     )
-    labels = clusterer.cluster_hdbscan(
-        reduced,
-        min_cluster_size=config['min_cluster_size'],
-        min_samples=config['min_samples']
-    )
+    
+    if "Hierarchical Funnel" in clustering_mode:
+        # Hierarchical funnel: Topic → Methodology → Temporal → Semantic
+        status_text.text("🎯 Stage 2/5: Hierarchical Funnel Clustering...")
+        status_text.text("   → Topic filtering (40% importance)...")
+        
+        funnel_clusterer = HierarchicalFunnelClusterer()
+        labels, funnel_report = funnel_clusterer.cluster_hierarchical_funnel(
+            valid_df,
+            valid_embeddings,
+            reduced,
+            min_cluster_size=config['min_cluster_size'],
+            min_topic_coverage=0.6,
+            min_methodology_coverage=0.5,
+            recency_window_years=5
+        )
+        
+        results['clustering_mode'] = 'hierarchical_funnel'
+        results['funnel_report'] = funnel_report
+        
+        # Display funnel stages
+        print("\n📊 Funnel Summary:")
+        summary = funnel_report['funnel_summary']
+        print(f"   Topics found: {len(summary['topic_distribution'])}")
+        print(f"   Methods found: {len(summary['methodology_distribution'])}")
+        print(f"   Final clusters: {summary['n_clusters']}")
+        print(f"   Clustering rate: {summary['clustering_rate']*100:.1f}%")
+        
+    elif "Domain-Aware + Adaptive" in clustering_mode:
+        # Combined: Domain-aware first, then adaptive within each domain
+        status_text.text("🎯 Stage 2a/5: Assigning medical domains...")
+        domain_clusterer = DomainAwareClusterer()
+        domain_labels = domain_clusterer.assign_domains(valid_df)
+        
+        status_text.text("🎯 Stage 2b/5: Adaptive clustering within domains...")
+        
+        # Cluster within each domain using adaptive strategy
+        adaptive_clusterer = AdaptiveClusterer()
+        labels = np.full(len(valid_df), -1, dtype=int)
+        next_cluster_id = 0
+        
+        domains_to_cluster = [d for d in domain_labels.unique() 
+                             if d not in ['unclassified', 'multi_domain']]
+        
+        for domain in sorted(domains_to_cluster):
+            domain_mask = domain_labels == domain
+            domain_size = domain_mask.sum()
+            
+            if domain_size < config['min_cluster_size']:
+                continue
+            
+            # Get embeddings for this domain
+            domain_embeddings = valid_embeddings[domain_mask]
+            domain_reduced = reduced[domain_mask]
+            domain_df = valid_df[domain_mask]
+            
+            # Adaptive clustering within domain
+            try:
+                local_labels = adaptive_clusterer.cluster_with_noise_reduction(
+                    domain_embeddings,
+                    domain_reduced,
+                    domain_df,
+                    min_cluster_size=config['min_cluster_size'],
+                    target_noise_ratio=0.3
+                )
+                
+                # Map to global labels
+                for local_label in np.unique(local_labels):
+                    if local_label == -1:
+                        continue
+                    local_mask = local_labels == local_label
+                    global_mask = np.where(domain_mask)[0][local_mask]
+                    labels[global_mask] = next_cluster_id
+                    next_cluster_id += 1
+            except Exception as e:
+                print(f"   ⚠️ Error in {domain}: {str(e)}")
+                # Skip this domain if clustering fails
+                continue
+        
+        results['domain_labels'] = domain_labels
+        results['domain_stats'] = domain_clusterer.get_domain_statistics(valid_df, domain_labels)
+        results['clustering_mode'] = 'domain_aware_adaptive'
+        
+    elif "Adaptive Only" in clustering_mode:
+        # Adaptive clustering - multiple strategies to reduce noise
+        status_text.text("🎯 Stage 2: Adaptive clustering (reducing noise)...")
+        adaptive_clusterer = AdaptiveClusterer()
+        labels = adaptive_clusterer.cluster_with_noise_reduction(
+            valid_embeddings,
+            reduced,
+            valid_df,
+            min_cluster_size=config['min_cluster_size'],
+            target_noise_ratio=0.3  # Target <30% noise
+        )
+        results['clustering_mode'] = 'adaptive'
+        
+    elif "Domain-Aware Only" in clustering_mode:
+        # Domain-aware clustering
+        status_text.text("🎯 Stage 2a/5: Assigning medical domains...")
+        domain_clusterer = DomainAwareClusterer()
+        domain_labels = domain_clusterer.assign_domains(valid_df)
+        
+        status_text.text("🎯 Stage 2b/5: Clustering within domains...")
+        labels = domain_clusterer.cluster_within_domains(
+            valid_df,
+            valid_embeddings,
+            domain_labels,
+            clusterer,
+            min_cluster_size=config['min_cluster_size']
+        )
+        
+        results['domain_labels'] = domain_labels
+        results['domain_stats'] = domain_clusterer.get_domain_statistics(valid_df, domain_labels)
+        results['clustering_mode'] = 'domain_aware'
+        
+    else:
+        # Standard semantic clustering
+        labels = clusterer.cluster_hdbscan(
+            reduced,
+            min_cluster_size=config['min_cluster_size'],
+            min_samples=config['min_samples']
+        )
+        results['clustering_mode'] = 'standard'
     
     results['labels'] = labels
     results['reduced_embeddings'] = reduced
     results['n_clusters'] = len([l for l in np.unique(labels) if l != -1])
     results['n_noise'] = (labels == -1).sum()
+    
+    # Stage 2.5: Filter incoherent clusters (if enabled)
+    if config.get('filter_incoherent', True):
+        status_text.text("🎯 Stage 2.5/5: Filtering incoherent clusters...")
+        
+        coherence_validator = ThematicCoherenceValidator()
+        labels, coherence_report = coherence_validator.filter_incoherent_clusters(valid_df, labels)
+        
+        # Update counts
+        results['labels'] = labels
+        results['n_clusters_before_filter'] = results['n_clusters']
+        results['n_clusters'] = len([l for l in np.unique(labels) if l != -1])
+        results['n_noise'] = (labels == -1).sum()
+        results['coherence_report'] = coherence_report
+        
+        removed = coherence_report['removed_clusters']
+        kept = coherence_report['kept_clusters']
+        print(f"\n   Filtered {removed} incoherent clusters, kept {kept} coherent clusters")
     
     # Stage 3: Validation
     status_text.text("✅ Stage 3/5: Validating clusters...")
@@ -167,9 +312,9 @@ def run_pipeline(df, config, progress_bar, status_text):
         progress_bar.progress(0.8)
         
         custom_validator = CustomCriteriaValidator()
-        custom_validator.add_criterion(DataAvailabilityCriterion(weight=0.15))
-        custom_validator.add_criterion(ClinicalTrialSponsorCriterion(weight=0.10))
-        custom_validator.add_criterion(ReplicationStatusCriterion(weight=0.10))
+        custom_validator.add_criterion(DataAvailabilityCriterion(weight=config['data_availability_weight']))
+        custom_validator.add_criterion(ClinicalTrialSponsorCriterion(weight=config['clinical_trial_weight']))
+        custom_validator.add_criterion(ReplicationStatusCriterion(weight=config['replication_weight']))
         
         custom_results = custom_validator.evaluate_all_clusters(valid_df, labels, text_column='abstract_text')
         results['custom_validation'] = custom_results
@@ -178,7 +323,13 @@ def run_pipeline(df, config, progress_bar, status_text):
     status_text.text("💡 Stage 5/5: Generating hypotheses...")
     progress_bar.progress(0.9)
     
-    hypotheses = generate_hypotheses(valid_df, labels, validation_results)
+    hypotheses = generate_hypotheses(
+        valid_df, 
+        labels, 
+        validation_results,
+        max_cluster_size=config.get('max_cluster_size_for_hypotheses', 30),
+        require_future_work=config.get('require_future_work', True)
+    )
     results['hypotheses'] = hypotheses
     results['df'] = valid_df
     
@@ -187,10 +338,32 @@ def run_pipeline(df, config, progress_bar, status_text):
     
     return results
 
-def generate_hypotheses(df, labels, validation_results):
-    """Generate detailed hypotheses from clusters"""
+def generate_hypotheses(df, labels, validation_results, max_cluster_size=30, require_future_work=True):
+    """
+    Generate detailed, actionable hypotheses from clusters
+    Based on reproducible_hypotheses approach with real data analysis
+    """
     
     hypotheses = []
+    
+    future_work_keywords = [
+        'future work', 'future research', 'future studies',
+        'limitation', 'limited by', 'gap', 'need for',
+        'further research', 'additional studies', 'warrant',
+        'should be investigated', 'remains to be', 'unclear',
+        'not yet', 'unexplored', 'understudied', 'future direction'
+    ]
+    
+    data_availability_keywords = [
+        'dataset', 'database', 'github', 'figshare', 'zenodo',
+        'data available', 'supplementary data', 'code available',
+        'open access', 'publicly available'
+    ]
+    
+    computational_keywords = [
+        'machine learning', 'deep learning', 'neural network',
+        'algorithm', 'computational', 'model', 'prediction'
+    ]
     
     for cluster_name, cluster_data in validation_results['cluster_reports'].items():
         cluster_id = int(cluster_name.replace('cluster_', ''))
@@ -201,12 +374,97 @@ def generate_hypotheses(df, labels, validation_results):
         cluster_mask = labels == cluster_id
         cluster_papers = df[cluster_mask]
         
+        # Filter by size
         if len(cluster_papers) < 5:
             continue
         
-        # Calculate scores
-        reproducibility = cluster_data['overall_score']
+        # Skip large meta-analysis clusters
+        if len(cluster_papers) > max_cluster_size:
+            continue
+        
+        # Check for future work mentions if required
+        if require_future_work:
+            has_future_work = False
+            for idx, row in cluster_papers.iterrows():
+                if 'abstract_text' in row and pd.notna(row['abstract_text']):
+                    text = str(row['abstract_text']).lower()
+                    if any(kw in text for kw in future_work_keywords):
+                        has_future_work = True
+                        break
+            
+            if not has_future_work:
+                continue
+        
+        # Calculate base scores
+        validation_score = cluster_data['overall_score']
         size = len(cluster_papers)
+        
+        # REAL DATA ANALYSIS: Calculate reproducibility score
+        # Based on: data availability, computational feasibility, citation count
+        
+        # 1. Data availability score (0-1)
+        data_available_count = 0
+        for idx, row in cluster_papers.iterrows():
+            text = ''
+            if 'abstract_text' in row and pd.notna(row['abstract_text']):
+                text = str(row['abstract_text']).lower()
+            if any(kw in text for kw in data_availability_keywords):
+                data_available_count += 1
+        data_availability_score = data_available_count / size
+        
+        # 2. Computational score (0-1)
+        computational_count = 0
+        for idx, row in cluster_papers.iterrows():
+            text = ''
+            if 'abstract_text' in row and pd.notna(row['abstract_text']):
+                text = str(row['abstract_text']).lower()
+            if any(kw in text for kw in computational_keywords):
+                computational_count += 1
+        computational_score = computational_count / size
+        
+        # 3. Future work score (0-1)
+        future_work_count = 0
+        for idx, row in cluster_papers.iterrows():
+            if 'abstract_text' in row and pd.notna(row['abstract_text']):
+                text = str(row['abstract_text']).lower()
+                if any(kw in text for kw in future_work_keywords):
+                    future_work_count += 1
+        future_work_score = future_work_count / size
+        
+        # 4. Recency score (0-1) - newer papers = more relevant
+        if 'publication_year' in cluster_papers.columns:
+            years = pd.to_numeric(cluster_papers['publication_year'], errors='coerce').dropna()
+            if len(years) > 0:
+                avg_year = years.mean()
+                recency_score = min((avg_year - 2010) / 15, 1.0)  # 2010-2025 range
+            else:
+                recency_score = 0.5
+        else:
+            recency_score = 0.5
+        
+        # OVERALL REPRODUCIBILITY SCORE (0-10 scale)
+        # Weighted combination of factors
+        reproducibility = (
+            validation_score * 0.25 +         # Scientific coherence
+            data_availability_score * 0.30 +   # Data available
+            computational_score * 0.20 +       # Computational feasibility
+            future_work_score * 0.15 +        # Has gaps identified
+            recency_score * 0.10              # Recent work
+        ) * 10
+        
+        # Calculate difficulty (inverse of feasibility)
+        difficulty = (
+            (1 - computational_score) * 0.4 +  # Non-computational = harder
+            (1 - data_availability_score) * 0.4 +  # No data = harder
+            (size / 30) * 0.2                  # More papers = more complex
+        ) * 10
+        
+        # Calculate impact (based on validation + size + recency)
+        impact = (
+            validation_score * 0.4 +
+            min(size / 20, 1.0) * 0.3 +        # More papers = more impact
+            recency_score * 0.3
+        ) * 10
         
         # Extract cluster characteristics
         scores = cluster_data.get('scores', {})
@@ -255,19 +513,22 @@ def generate_hypotheses(df, labels, validation_results):
             if keyword in all_text_lower:
                 common_terms.append(keyword)
         
-        # Determine hypothesis type
-        if size > 30:
-            hyp_type = 'Meta-Analysis'
-            type_rationale = f"Large cluster ({size} papers) suitable for systematic review"
-        elif 'computational' in dominant_method.lower() or 'machine learning' in all_text_lower:
-            hyp_type = 'ML Application'
-            type_rationale = f"Computational focus with potential for ML improvements"
-        elif size > 15:
-            hyp_type = 'Comparative Study'
-            type_rationale = f"Medium cluster ({size} papers) suitable for comparative analysis"
+        # Determine hypothesis type (prioritize actionable research over meta-analysis)
+        if 'computational' in dominant_method.lower() or 'machine learning' in all_text_lower or 'deep learning' in all_text_lower:
+            hyp_type = 'ML/AI Application'
+            type_rationale = f"Computational focus ({size} papers) with potential for ML/AI improvements"
+        elif 'genomic' in dominant_method.lower() or 'genetic' in all_text_lower:
+            hyp_type = 'Genomic Study'
+            type_rationale = f"Genetic/genomic focus ({size} papers) for data-driven discovery"
+        elif size <= 10:
+            hyp_type = 'Targeted Replication'
+            type_rationale = f"Small, focused cluster ({size} papers) ideal for replication with improvements"
+        elif size <= 20:
+            hyp_type = 'Comparative Analysis'
+            type_rationale = f"Medium cluster ({size} papers) suitable for comparing methodologies"
         else:
-            hyp_type = 'Replication Study'
-            type_rationale = f"Focused cluster ({size} papers) for targeted replication"
+            hyp_type = 'Synthesis Study'
+            type_rationale = f"Larger cluster ({size} papers) for synthesizing findings and identifying gaps"
         
         # Generate detailed title
         topic_hint = common_terms[0] if common_terms else dominant_method
@@ -276,10 +537,45 @@ def generate_hypotheses(df, labels, validation_results):
         # Generate detailed description
         description_parts = []
         
-        # Overview
-        description_parts.append(f"**Overview**: This cluster contains {size} papers ")
-        description_parts.append(f"published between {year_range} ({year_span} year span), ")
-        description_parts.append(f"with a validation score of {reproducibility:.2f}. ")
+        # Overview with REAL SCORES
+        description_parts.append(f"**Overview**: This cluster contains {size} ")
+        description_parts.append(f"{'ML-based ' if computational_score > 0.5 else ''}")
+        description_parts.append(f"papers published between {year_range} ({year_span} year span). ")
+        
+        # Reproducibility assessment
+        if reproducibility >= 8:
+            repro_label = "HIGH"
+        elif reproducibility >= 6:
+            repro_label = "MEDIUM-HIGH"
+        elif reproducibility >= 4:
+            repro_label = "MEDIUM"
+        else:
+            repro_label = "LOW"
+        
+        if difficulty >= 7:
+            diff_label = "HIGH"
+        elif difficulty >= 5:
+            diff_label = "MEDIUM"
+        else:
+            diff_label = "LOW"
+        
+        if impact >= 7:
+            impact_label = "HIGH"
+        elif impact >= 5:
+            impact_label = "MEDIUM"
+        else:
+            impact_label = "LOW"
+        
+        description_parts.append(f"\n\n**Reproducibility**: {repro_label} ({reproducibility:.1f}/10) ")
+        description_parts.append(f"| **Difficulty**: {diff_label} ({difficulty:.1f}/10) ")
+        description_parts.append(f"| **Impact**: {impact_label} ({impact:.1f}/10)")
+        
+        # Data analysis (REAL)
+        description_parts.append(f"\n\n**Data Analysis (Real)**:")
+        description_parts.append(f"\n- {data_available_count}/{size} papers ({data_availability_score:.0%}) mention available datasets")
+        description_parts.append(f"\n- {computational_count}/{size} papers ({computational_score:.0%}) are computational/ML-based")
+        description_parts.append(f"\n- {future_work_count}/{size} papers ({future_work_score:.0%}) explicitly mention future work/gaps")
+        description_parts.append(f"\n- Average publication year: {avg_year if 'avg_year' in locals() else 'N/A'}")
         
         # Methodology
         description_parts.append(f"\n\n**Methodology**: {method_interpretation} ")
@@ -308,15 +604,17 @@ def generate_hypotheses(df, labels, validation_results):
         if 'dataset' in all_text_lower or 'data' in all_text_lower:
             description_parts.append("Multiple papers mention datasets, suggesting good data availability. ")
         
-        # Recommended approach
-        if hyp_type == 'Meta-Analysis':
-            description_parts.append("\n\n**Recommended Approach**: Conduct systematic review and meta-analysis to synthesize findings across studies.")
-        elif hyp_type == 'ML Application':
-            description_parts.append("\n\n**Recommended Approach**: Develop ML models leveraging insights from existing computational work.")
-        elif hyp_type == 'Comparative Study':
-            description_parts.append("\n\n**Recommended Approach**: Compare methodologies and outcomes across studies to identify best practices.")
-        else:
-            description_parts.append("\n\n**Recommended Approach**: Replicate key findings with improved methodology or larger sample.")
+        # Recommended approach based on type
+        if hyp_type == 'ML/AI Application':
+            description_parts.append("\n\n**Recommended Approach**: Develop or improve ML/AI models using insights from these papers. Focus on novel architectures, better features, or cross-domain transfer learning.")
+        elif hyp_type == 'Genomic Study':
+            description_parts.append("\n\n**Recommended Approach**: Leverage genomic data to discover new biomarkers or validate existing findings with larger cohorts.")
+        elif hyp_type == 'Targeted Replication':
+            description_parts.append("\n\n**Recommended Approach**: Replicate key findings with improved methodology, larger sample size, or different population to validate generalizability.")
+        elif hyp_type == 'Comparative Analysis':
+            description_parts.append("\n\n**Recommended Approach**: Systematically compare methodologies and outcomes to identify best practices and optimal approaches.")
+        else:  # Synthesis Study
+            description_parts.append("\n\n**Recommended Approach**: Synthesize findings to identify research gaps, contradictions, and opportunities for novel contributions.")
         
         description = ''.join(description_parts)
         
@@ -330,7 +628,15 @@ def generate_hypotheses(df, labels, validation_results):
             'title': title,
             'description': description,
             'sample_papers': sample_titles,
+            # REAL SCORES based on data analysis
             'reproducibility': reproducibility,
+            'difficulty': difficulty,
+            'impact': impact,
+            'data_availability_score': data_availability_score,
+            'computational_score': computational_score,
+            'future_work_score': future_work_score,
+            'recency_score': recency_score,
+            # Cluster info
             'size': size,
             'year_range': year_range,
             'year_span': year_span,
@@ -339,7 +645,8 @@ def generate_hypotheses(df, labels, validation_results):
             'common_terms': common_terms[:5],
             'method_score': method_score,
             'framework_score': framework_score,
-            'priority_score': (reproducibility * 0.4 + min(size/50, 1) * 0.3 + 0.3) * 10
+            # Priority (higher reproducibility + lower difficulty = higher priority)
+            'priority_score': (reproducibility * 0.5 + (10 - difficulty) * 0.3 + impact * 0.2)
         }
         
         hypotheses.append(hypothesis)
@@ -387,12 +694,26 @@ def main():
         )
         
         st.subheader("Clustering Parameters")
+        
+        clustering_mode = st.radio(
+            "Clustering Strategy",
+            options=[
+                "🎯 Hierarchical Funnel (Recommended)",
+                "🎯🔬 Domain-Aware + Adaptive",
+                "🎯 Adaptive Only (Reduce Noise)",
+                "🔬 Domain-Aware Only",
+                "⚡ Standard"
+            ],
+            index=0,
+            help="Hierarchical Funnel: Topic → Methodology → Temporal → Semantic (conditional probability)"
+        )
+        
         min_cluster_size = st.slider(
             "Min Cluster Size",
-            min_value=5,
+            min_value=3,
             max_value=30,
-            value=15,
-            help="Minimum papers per cluster"
+            value=5 if "Adaptive" in clustering_mode else 15,
+            help="Minimum papers per cluster (smaller = more clusters, less noise)"
         )
         
         min_samples = st.slider(
@@ -411,11 +732,77 @@ def main():
             help="Dimensionality reduction components"
         )
         
-        st.subheader("Validation")
+        st.subheader("Validation Criteria")
         use_custom_criteria = st.checkbox(
             "Use Custom Criteria",
             value=True,
             help="Apply custom validation criteria (data availability, sponsors, etc.)"
+        )
+        
+        if use_custom_criteria:
+            with st.expander("⚙️ Adjust Criteria Weights"):
+                st.markdown("**Custom Criteria Weights** (must sum to ≤1.0)")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    data_availability_weight = st.slider(
+                        "Data Availability",
+                        min_value=0.0,
+                        max_value=0.5,
+                        value=0.15,
+                        step=0.05,
+                        help="Papers with available datasets"
+                    )
+                    
+                    clinical_trial_weight = st.slider(
+                        "Clinical Trial Sponsor",
+                        min_value=0.0,
+                        max_value=0.5,
+                        value=0.10,
+                        step=0.05,
+                        help="Clear sponsor information"
+                    )
+                
+                with col2:
+                    replication_weight = st.slider(
+                        "Replication Status",
+                        min_value=0.0,
+                        max_value=0.5,
+                        value=0.10,
+                        step=0.05,
+                        help="Findings replicated/validated"
+                    )
+                
+                total_weight = data_availability_weight + clinical_trial_weight + replication_weight
+                if total_weight > 1.0:
+                    st.error(f"⚠️ Total weight ({total_weight:.2f}) exceeds 1.0!")
+                else:
+                    st.success(f"✅ Total custom weight: {total_weight:.2f}")
+        else:
+            data_availability_weight = 0.15
+            clinical_trial_weight = 0.10
+            replication_weight = 0.10
+        
+        st.subheader("Hypothesis Generation")
+        
+        max_cluster_size_for_hypotheses = st.slider(
+            "Max Cluster Size for Hypotheses",
+            min_value=10,
+            max_value=100,
+            value=30,
+            help="Ignore large meta-analysis clusters. Focus on smaller, actionable research gaps."
+        )
+        
+        require_future_work = st.checkbox(
+            "Require Future Work Mentions",
+            value=True,
+            help="Only generate hypotheses for clusters with papers mentioning future work/gaps"
+        )
+        
+        filter_incoherent = st.checkbox(
+            "🎯 Filter Incoherent Clusters",
+            value=True,
+            help="Remove clusters where papers don't share a specific medical topic (e.g., mixing heart failure + kidney stones)"
         )
         
         st.divider()
@@ -425,10 +812,17 @@ def main():
             'dataset_size': dataset_size,
             'computational_only': computational_only,
             'embedding_model': embedding_model,
+            'clustering_mode': clustering_mode,
             'min_cluster_size': min_cluster_size,
             'min_samples': min_samples,
             'umap_components': umap_components,
-            'use_custom_criteria': use_custom_criteria
+            'use_custom_criteria': use_custom_criteria,
+            'data_availability_weight': data_availability_weight,
+            'clinical_trial_weight': clinical_trial_weight,
+            'replication_weight': replication_weight,
+            'max_cluster_size_for_hypotheses': max_cluster_size_for_hypotheses,
+            'require_future_work': require_future_work,
+            'filter_incoherent': filter_incoherent
         }
         
         # Run button
@@ -523,6 +917,10 @@ def main():
             # Summary metrics
             st.subheader("📊 Pipeline Summary")
             
+            # Show funnel info if applicable
+            if 'funnel_report' in results:
+                st.info("🎯 **Hierarchical Funnel Applied**: Topic (40%) → Methodology (25%) → Temporal (15%) → Semantic (20%)")
+            
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
@@ -539,10 +937,48 @@ def main():
                 st.metric("Hypotheses Generated", len(results['hypotheses']))
             
             # Tabs for different views
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 Clusters", "✅ Validation", "💡 Hypotheses", "🔍 Criteria", "📥 Export"])
+            if 'funnel_report' in results:
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                    "🎯 Clusters", 
+                    "🔍 Funnel Analysis", 
+                    "✅ Validation", 
+                    "💡 Hypotheses", 
+                    "📋 Criteria", 
+                    "📥 Export"
+                ])
+            else:
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "🎯 Clusters", 
+                    "✅ Validation", 
+                    "💡 Hypotheses", 
+                    "🔍 Criteria", 
+                    "📥 Export"
+                ])
+                tab6 = None
             
             with tab1:
                 st.subheader("Cluster Visualization")
+                
+                # Show domain statistics if domain-aware clustering was used
+                if 'domain_stats' in results:
+                    st.info("🔬 **Domain-Aware Clustering Enabled** - Papers clustered within medical domains")
+                    
+                    with st.expander("View Domain Distribution"):
+                        domain_stats = results['domain_stats']
+                        domain_df = pd.DataFrame([
+                            {"Domain": k.title(), "Papers": v} 
+                            for k, v in domain_stats['domain_counts'].items()
+                        ]).sort_values('Papers', ascending=False)
+                        
+                        fig_domains = px.bar(
+                            domain_df,
+                            x='Domain',
+                            y='Papers',
+                            title='Papers by Medical Domain',
+                            color='Papers',
+                            color_continuous_scale='Viridis'
+                        )
+                        st.plotly_chart(fig_domains, width='stretch')
                 
                 # 2D scatter plot
                 df_plot = pd.DataFrame({
@@ -552,12 +988,16 @@ def main():
                     'title': results['df']['title'].values
                 })
                 
+                # Add domain info if available
+                if 'domain_labels' in results:
+                    df_plot['domain'] = results['domain_labels'].values
+                
                 fig = px.scatter(
                     df_plot,
                     x='x',
                     y='y',
                     color='cluster',
-                    hover_data=['title'],
+                    hover_data=['title', 'domain'] if 'domain' in df_plot.columns else ['title'],
                     title='Paper Clusters (UMAP Projection)',
                     width=900,
                     height=600
@@ -574,20 +1014,26 @@ def main():
                         size = (results['labels'] == label).sum()
                         cluster_sizes.append({'Cluster': f"Cluster {label}", 'Size': size})
                 
-                cluster_df = pd.DataFrame(cluster_sizes).sort_values('Size', ascending=False)
-                
-                fig_bar = px.bar(
-                    cluster_df,
-                    x='Cluster',
-                    y='Size',
-                    title='Papers per Cluster',
-                    color='Size',
-                    color_continuous_scale='Blues'
-                )
-                
-                st.plotly_chart(fig_bar, width='stretch')
+                if cluster_sizes:
+                    cluster_df = pd.DataFrame(cluster_sizes).sort_values('Size', ascending=False)
+                    
+                    fig_bar = px.bar(
+                        cluster_df,
+                        x='Cluster',
+                        y='Size',
+                        title='Papers per Cluster',
+                        color='Size',
+                        color_continuous_scale='Blues'
+                    )
+                    
+                    st.plotly_chart(fig_bar, width='stretch')
+                else:
+                    st.warning("No clusters found. All papers were classified as noise. Try adjusting parameters.")
             
-            with tab2:
+            # Validation tab (tab2 if no funnel, tab4 if funnel)
+            validation_tab = tab4 if tab6 is not None else tab2
+            
+            with validation_tab:
                 st.subheader("Validation Scores")
                 
                 validation = results['validation']
@@ -619,24 +1065,176 @@ def main():
                         'Status': '✅ Pass' if cluster_data['validation_passed'] else '❌ Fail'
                     })
                 
-                scores_df = pd.DataFrame(scores_data)
-                
-                fig_scores = px.bar(
-                    scores_df,
-                    x='Cluster',
-                    y='Overall Score',
-                    color='Status',
-                    title='Validation Scores by Cluster',
-                    color_discrete_map={'✅ Pass': 'green', '❌ Fail': 'red'}
-                )
-                fig_scores.add_hline(y=0.6, line_dash="dash", line_color="orange", 
-                                    annotation_text="Pass Threshold")
-                
-                st.plotly_chart(fig_scores, width='stretch')
-                
-                # Detailed scores table
-                st.subheader("Detailed Scores")
-                st.dataframe(scores_df, hide_index=True, width='stretch')
+                if scores_data:
+                    scores_df = pd.DataFrame(scores_data)
+                    
+                    fig_scores = px.bar(
+                        scores_df,
+                        x='Cluster',
+                        y='Overall Score',
+                        color='Status',
+                        title='Validation Scores by Cluster',
+                        color_discrete_map={'✅ Pass': 'green', '❌ Fail': 'red'}
+                    )
+                    fig_scores.add_hline(y=0.6, line_dash="dash", line_color="orange", 
+                                        annotation_text="Pass Threshold")
+                    
+                    st.plotly_chart(fig_scores, width='stretch')
+                    
+                    # Detailed scores table
+                    st.subheader("Detailed Scores")
+                    st.dataframe(scores_df, hide_index=True, width='stretch')
+                else:
+                    st.warning("No clusters to validate. All papers were classified as noise.")
+            
+            # Funnel Analysis Tab (only if funnel was used)
+            if tab6 is not None:
+                with tab2:
+                    st.subheader("🔍 Hierarchical Funnel Analysis")
+                    
+                    funnel_report = results['funnel_report']
+                    summary = funnel_report['funnel_summary']
+                    
+                    st.markdown("""
+                    **Funnel Stages (in order of importance)**:
+                    1. **Topic** (40%) - Same specific medical condition
+                    2. **Methodology** (25%) - Same research approach  
+                    3. **Temporal** (15%) - Similar time period (recency)
+                    4. **Semantic** (20%) - Fine-grained similarity
+                    """)
+                    
+                    # Stage-by-stage breakdown
+                    st.markdown("### 📊 Funnel Flow")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric(
+                            "Stage 1: Topics",
+                            len(summary['topic_distribution']),
+                            help="Specific medical topics identified"
+                        )
+                    
+                    with col2:
+                        st.metric(
+                            "Stage 2: Methods",
+                            len(summary['methodology_distribution']),
+                            help="Research methodologies detected"
+                        )
+                    
+                    with col3:
+                        st.metric(
+                            "Stage 3: Time Groups",
+                            "Recent + Older",
+                            help="Papers grouped by recency"
+                        )
+                    
+                    with col4:
+                        st.metric(
+                            "Stage 4: Final Clusters",
+                            summary['n_clusters'],
+                            help="Semantically refined clusters"
+                        )
+                    
+                    # Topic distribution
+                    st.markdown("### 📍 Topic Distribution (Stage 1)")
+                    
+                    topic_data = []
+                    for topic, count in summary['topic_distribution'].items():
+                        topic_data.append({
+                            'Topic': topic.replace('_', ' ').title(),
+                            'Papers': count,
+                            'Percentage': f"{count/summary['total_papers']*100:.1f}%"
+                        })
+                    
+                    if topic_data:
+                        topic_df = pd.DataFrame(topic_data).sort_values('Papers', ascending=False)
+                        
+                        fig_topics = px.bar(
+                            topic_df,
+                            x='Topic',
+                            y='Papers',
+                            title='Papers by Specific Medical Topic',
+                            color='Papers',
+                            color_continuous_scale='Blues'
+                        )
+                        st.plotly_chart(fig_topics, width='stretch')
+                    else:
+                        st.warning("No specific topics identified. Papers may be too diverse or use non-medical terminology.")
+                    
+                    # Methodology distribution
+                    st.markdown("### 🔬 Methodology Distribution (Stage 2)")
+                    
+                    method_data = []
+                    for method, count in summary['methodology_distribution'].items():
+                        method_data.append({
+                            'Methodology': method.replace('_', ' ').title(),
+                            'Papers': count,
+                            'Percentage': f"{count/summary['total_papers']*100:.1f}%"
+                        })
+                    
+                    if method_data:
+                        method_df = pd.DataFrame(method_data).sort_values('Papers', ascending=False)
+                        
+                        fig_methods = px.bar(
+                            method_df,
+                            x='Methodology',
+                            y='Papers',
+                            title='Papers by Research Methodology',
+                            color='Papers',
+                            color_continuous_scale='Greens'
+                        )
+                        st.plotly_chart(fig_methods, width='stretch')
+                    else:
+                        st.warning("No specific methodologies identified.")
+                    
+                    # Cluster details
+                    st.markdown("### 🎯 Final Cluster Composition")
+                    
+                    cluster_composition = []
+                    for cluster_id, details in funnel_report['cluster_details'].items():
+                        cluster_composition.append({
+                            'Cluster': cluster_id,
+                            'Topic': details['topic'].replace('_', ' ').title(),
+                            'Methodology': details['methodology'].replace('_', ' ').title(),
+                            'Time Group': details['time_group'].title(),
+                            'Size': details['size']
+                        })
+                    
+                    if cluster_composition:
+                        comp_df = pd.DataFrame(cluster_composition).sort_values('Size', ascending=False)
+                        st.dataframe(comp_df, hide_index=True, width='stretch')
+                    else:
+                        st.info("No clusters formed after funnel stages. Try lowering min_cluster_size or increasing dataset size.")
+                    
+                    # Funnel efficiency
+                    st.markdown("### 📈 Funnel Efficiency")
+                    
+                    eff_col1, eff_col2, eff_col3 = st.columns(3)
+                    
+                    with eff_col1:
+                        st.metric(
+                            "Clustering Rate",
+                            f"{summary['clustering_rate']*100:.1f}%",
+                            help="% of papers successfully clustered"
+                        )
+                    
+                    with eff_col2:
+                        st.metric(
+                            "Avg Cluster Purity",
+                            f"{summary['avg_purity']*100:.0f}%",
+                            help="How pure clusters are (same topic+method)"
+                        )
+                    
+                    with eff_col3:
+                        avg_size = summary['clustered_papers'] / summary['n_clusters'] if summary['n_clusters'] > 0 else 0
+                        st.metric(
+                            "Avg Cluster Size",
+                            f"{avg_size:.1f}",
+                            help="Average papers per cluster"
+                        )
+                    
+                    st.success("✅ All clusters are guaranteed to have the same specific topic AND methodology")
             
             with tab3:
                 st.subheader("Generated Hypotheses")
@@ -655,16 +1253,30 @@ def main():
                             cluster_mask = results['labels'] == cluster_id
                             cluster_papers = results['df'][cluster_mask]
                             
-                            # Metrics row
-                            col1, col2, col3, col4 = st.columns(4)
+                            # Metrics row - REAL SCORES
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             with col1:
-                                st.metric("Priority Score", f"{hyp['priority_score']:.2f}/10")
+                                st.metric("Reproducibility", f"{hyp['reproducibility']:.1f}/10")
                             with col2:
-                                st.metric("Reproducibility", f"{hyp['reproducibility']:.2f}")
+                                st.metric("Difficulty", f"{hyp['difficulty']:.1f}/10")
                             with col3:
-                                st.metric("Cluster Size", hyp['size'])
+                                st.metric("Impact", f"{hyp['impact']:.1f}/10")
                             with col4:
+                                st.metric("Size", hyp['size'])
+                            with col5:
                                 st.metric("Type", hyp['type'])
+                            
+                            # Sub-metrics with real data
+                            st.markdown("**📊 Data-Based Scores:**")
+                            subcol1, subcol2, subcol3, subcol4 = st.columns(4)
+                            with subcol1:
+                                st.metric("Data Available", f"{hyp['data_availability_score']:.0%}")
+                            with subcol2:
+                                st.metric("Computational", f"{hyp['computational_score']:.0%}")
+                            with subcol3:
+                                st.metric("Future Work", f"{hyp['future_work_score']:.0%}")
+                            with subcol4:
+                                st.metric("Recency", f"{hyp['recency_score']:.0%}")
                             
                             st.divider()
                             
@@ -712,10 +1324,154 @@ def main():
                                     
                                     st.markdown("---")
             
-            with tab4:
+            # Criteria tab (tab4 if no funnel, tab5 if funnel)
+            criteria_tab = tab5 if tab6 is not None else tab4
+            
+            with criteria_tab:
                 st.subheader("🔍 Validation Criteria Used")
                 
-                st.markdown("### Standard Criteria (Always Applied)")
+                # Show clustering mode info
+                clustering_mode = st.session_state.config.get('clustering_mode', 'standard')
+                
+                if clustering_mode == 'hierarchical_funnel':
+                    st.info("🎯 **Hierarchical Funnel Clustering Active** - Multi-stage filtering with ordered importance")
+                    
+                    st.markdown("### 📊 Hierarchical Funnel Stages & Weights")
+                    st.markdown("*Ordered by importance - each stage filters papers before the next*")
+                    
+                    funnel_stages = pd.DataFrame([
+                        {
+                            "Stage": "1️⃣ Topic Coherence",
+                            "Weight": "40%",
+                            "Threshold": "0.15 similarity",
+                            "Purpose": "Group papers by specific medical topic (e.g., 'heart failure', 'breast cancer')",
+                            "Method": "MeSH term similarity + keyword matching"
+                        },
+                        {
+                            "Stage": "2️⃣ Methodology Coherence", 
+                            "Weight": "25%",
+                            "Threshold": "Same method",
+                            "Purpose": "Ensure all papers use same research method (Clinical Trial, Cohort, Lab, etc.)",
+                            "Method": "Keyword detection + classification"
+                        },
+                        {
+                            "Stage": "3️⃣ Temporal Coherence",
+                            "Weight": "15%", 
+                            "Threshold": "5-year window",
+                            "Purpose": "Group papers from similar time periods (methods evolve)",
+                            "Method": "Publication year grouping"
+                        },
+                        {
+                            "Stage": "4️⃣ Semantic Coherence",
+                            "Weight": "20%",
+                            "Threshold": "0.3 cosine sim",
+                            "Purpose": "Final semantic clustering using embeddings",
+                            "Method": "HDBSCAN on filtered papers"
+                        }
+                    ])
+                    
+                    st.dataframe(funnel_stages, hide_index=True, column_config={
+                        "Stage": st.column_config.TextColumn("Stage", width="small"),
+                        "Weight": st.column_config.TextColumn("Weight", width="small"),
+                        "Threshold": st.column_config.TextColumn("Threshold", width="medium"),
+                        "Purpose": st.column_config.TextColumn("Purpose", width="large"),
+                        "Method": st.column_config.TextColumn("Method", width="medium")
+                    })
+                    
+                    st.success("✅ **Guarantee**: All final clusters have papers with the SAME topic AND methodology")
+                    
+                    st.markdown("---")
+                
+                st.markdown("### 🧬 Semantic Embeddings - Features Used")
+                st.markdown("*Text fields combined to create paper representations*")
+                
+                embedding_features = pd.DataFrame([
+                    {
+                        "Feature": "Title",
+                        "Priority": "⭐⭐⭐ High",
+                        "Format": "Title: [paper title]",
+                        "Example": "Title: Machine learning-based automatic estimation of cortical atrophy..."
+                    },
+                    {
+                        "Feature": "Abstract",
+                        "Priority": "⭐⭐⭐ High", 
+                        "Format": "Abstract: [full abstract text]",
+                        "Example": "Abstract: Cortical atrophy is measured clinically according to established..."
+                    },
+                    {
+                        "Feature": "MeSH Terms",
+                        "Priority": "⭐⭐ Medium",
+                        "Format": "MeSH: [medical subject headings]",
+                        "Example": "MeSH: Alzheimer Disease, Atrophy, Brain, Humans, Machine Learning"
+                    },
+                    {
+                        "Feature": "Keywords",
+                        "Priority": "⭐ Low",
+                        "Format": "Keywords: [author keywords]",
+                        "Example": "Keywords: deep learning, medical imaging, neurodegeneration"
+                    }
+                ])
+                
+                st.dataframe(embedding_features, hide_index=True, column_config={
+                    "Feature": st.column_config.TextColumn("Feature", width="small"),
+                    "Priority": st.column_config.TextColumn("Priority", width="small"),
+                    "Format": st.column_config.TextColumn("Format", width="medium"),
+                    "Example": st.column_config.TextColumn("Example", width="large")
+                })
+                
+                embedding_model = st.session_state.config.get('embedding_model', 'all-MiniLM-L6-v2')
+                
+                model_info = {
+                    'all-MiniLM-L6-v2': {
+                        'name': 'MiniLM-L6-v2',
+                        'dims': 384,
+                        'speed': 'Fast',
+                        'quality': 'Good',
+                        'description': 'General-purpose sentence encoder, balanced speed/quality'
+                    },
+                    'allenai/specter': {
+                        'name': 'SPECTER',
+                        'dims': 768,
+                        'speed': 'Medium',
+                        'quality': 'Excellent',
+                        'description': 'Scientific paper encoder trained on citations, best for research papers'
+                    },
+                    'all-mpnet-base-v2': {
+                        'name': 'MPNet-base-v2',
+                        'dims': 768,
+                        'speed': 'Medium',
+                        'quality': 'Excellent',
+                        'description': 'High-quality general encoder, good for semantic similarity'
+                    }
+                }
+                
+                if embedding_model in model_info:
+                    info = model_info[embedding_model]
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Model", info['name'])
+                    with col2:
+                        st.metric("Dimensions", info['dims'])
+                    with col3:
+                        st.metric("Speed", info['speed'])
+                    with col4:
+                        st.metric("Quality", info['quality'])
+                    
+                    st.caption(f"ℹ️ {info['description']}")
+                
+                st.markdown("**Process:**")
+                st.markdown("""
+                1. **Text Combination**: Title + Abstract + MeSH + Keywords → single text string
+                2. **Tokenization**: Text split into tokens by transformer model
+                3. **Encoding**: Tokens → dense vector representation (embeddings)
+                4. **Dimensionality**: 384 or 768 dimensions depending on model
+                5. **Similarity**: Cosine similarity between embeddings measures semantic relatedness
+                """)
+                
+                st.markdown("---")
+                
+                st.markdown("### Standard Validation Criteria (Always Applied)")
+                st.markdown("*Used to score cluster quality after formation*")
                 
                 criteria_standard = pd.DataFrame([
                     {
@@ -811,7 +1567,10 @@ def main():
                 
                 st.info("📖 For complete documentation, see `VALIDATION_CRITERIA.md` in the repository")
             
-            with tab5:
+            # Export tab (tab5 if no funnel, tab6 if funnel)
+            export_tab = tab6 if tab6 is not None else tab5
+            
+            with export_tab:
                 st.subheader("Export Results")
                 
                 # Prepare export data

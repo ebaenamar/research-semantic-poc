@@ -18,6 +18,15 @@ This project implements a **classification-first approach** to scientific resear
 
 **Extensible validation system** - Add custom criteria (clinical trial sponsors, data availability, etc.) without modifying core code.
 
+## 📖 Documentation
+
+**Start here**: [`TAKEAWAYS.md`](TAKEAWAYS.md) - Comprehensive project summary with all key insights
+
+**Quick guides**:
+- [`QUICKSTART.md`](QUICKSTART.md) - 5-minute setup
+- [`APP_V3_GUIDE.md`](APP_V3_GUIDE.md) - Latest web interface with PubMed enrichment
+- [`HIERARCHICAL_FUNNEL_GUIDE.md`](HIERARCHICAL_FUNNEL_GUIDE.md) - Advanced clustering
+
 ## 🚀 Quick Start
 
 ```bash
@@ -25,15 +34,16 @@ This project implements a **classification-first approach** to scientific resear
 git clone https://github.com/ebaenamar/research-semantic-poc.git
 cd research-semantic-poc
 
-# Setup (installs dependencies and downloads dataset)
-./setup.sh
+# Setup environment
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
 
-# Test components step-by-step
-source venv/bin/activate
-python scripts/test_automated.py
+# Run web interface (latest version with PubMed enrichment)
+streamlit run app_v3.py --server.port 8503
 
-# Run full pipeline
-python scripts/run_full_pipeline.py
+# Or run batch script
+python scripts/generate_reproducible_hypotheses.py
 ```
 
 ## 📊 Architecture
