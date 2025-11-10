@@ -20,12 +20,23 @@ This project implements a **classification-first approach** to scientific resear
 
 ## 📖 Documentation
 
-**Start here**: [`TAKEAWAYS.md`](TAKEAWAYS.md) - Comprehensive project summary with all key insights
+### 🌟 Essential Reading
 
-**Quick guides**:
-- [`QUICKSTART.md`](QUICKSTART.md) - 5-minute setup
-- [`APP_V3_GUIDE.md`](APP_V3_GUIDE.md) - Latest web interface with PubMed enrichment
-- [`HIERARCHICAL_FUNNEL_GUIDE.md`](HIERARCHICAL_FUNNEL_GUIDE.md) - Advanced clustering
+**START HERE**: [`TAKEAWAYS.md`](TAKEAWAYS.md) - Complete project summary with architecture, features, and lessons learned
+
+### 📚 Core Documentation
+
+- **Setup**: [`QUICKSTART.md`](QUICKSTART.md) - Get running in 5 minutes
+- **Latest App**: [`APP_V3_GUIDE.md`](APP_V3_GUIDE.md) - Web interface with PubMed enrichment
+- **Architecture**: [`ARCHITECTURE.md`](ARCHITECTURE.md) - System design and components
+- **Validation**: [`VALIDATION_CRITERIA.md`](VALIDATION_CRITERIA.md) - Quality assessment criteria
+
+### 🔬 Advanced Topics
+
+- [`EXPERIMENTAL_DESIGN_GUIDE.md`](EXPERIMENTAL_DESIGN_GUIDE.md) - Research protocols
+- [`HYPOTHESIS_EXECUTION_SUMMARY.md`](HYPOTHESIS_EXECUTION_SUMMARY.md) - Execution checklist
+- [`TESTING_CHECKLIST.md`](TESTING_CHECKLIST.md) - Testing procedures
+- [`NOISE_REDUCTION_GUIDE.md`](NOISE_REDUCTION_GUIDE.md) - Clustering optimization
 
 ## 🚀 Quick Start
 
